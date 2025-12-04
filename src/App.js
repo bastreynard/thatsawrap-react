@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Music, ArrowRight, Check, Loader2, CheckCircle, Heart, X } from 'lucide-react';
+import Icon from "./res/icon.png";
 
 export default function PlaylistTransfer() {
   const [spotifyAuth, setSpotifyAuth] = useState(false);
@@ -150,7 +151,7 @@ export default function PlaylistTransfer() {
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-12">
           <div className="flex items-center justify-center gap-3 mb-4">
-            <Music className="w-10 h-10 text-green-600" />
+            <img src={Icon} alt="Icon" className="w-10 h-10" />
             <h1 className="text-4xl font-bold text-gray-800">
               That's a wrap
             </h1>
