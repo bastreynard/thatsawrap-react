@@ -10,7 +10,7 @@ export default function PlaylistTransfer() {
   const [transferring, setTransferring] = useState(false);
   const [transferStatus, setTransferStatus] = useState('');
 
-  const API_URL = 'http://127.0.0.1:5000';
+  const API_URL = 'http://127.0.0.1:8080/api';
 
   useEffect(() => {
     document.title = "That's a wrap";
@@ -87,7 +87,7 @@ export default function PlaylistTransfer() {
 
   const loadSpotifyPlaylists = async () => {
     try {
-      const res = await fetch(`${API_URL}/playlists`, {
+      const res = await fetch(`${API_URL}/spotify/playlists`, {
         credentials: 'include'
       });
       const data = await res.json();
