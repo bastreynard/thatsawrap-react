@@ -10,6 +10,7 @@ export default function PlaylistTransfer() {
   const [selectedPlaylist, setSelectedPlaylist] = useState(null);
   const [transferring, setTransferring] = useState(false);
   const [transferStatus, setTransferStatus] = useState('');
+  const [transferProgress, setTransferProgress] = useState(0);
 
   const API_URL = 'http://127.0.0.1:8080/api';
 
@@ -17,9 +18,7 @@ export default function PlaylistTransfer() {
     document.title = "That's a wrap";
     checkAuthStatus();
     
-    // Check auth status every 2 seconds, but stop once we have playlists
     const interval = setInterval(() => {
-      // Stop polling if both services are connected and have playlists loaded
       if ((spotifyAuth && spotifyPlaylists.length > 0) || 
           (!spotifyAuth && !tidalAuth)) {
         return;
@@ -33,13 +32,12 @@ export default function PlaylistTransfer() {
   const checkAuthStatus = async () => {
     try {
       const res = await fetch(`${API_URL}/auth/status`, {
-        credentials: 'include'  // Important: include cookies
+        credentials: 'include'
       });
       const data = await res.json();
       setSpotifyAuth(data.spotify);
       setTidalAuth(data.tidal);
       
-      // Auto-load playlists if authenticated
       if (data.spotify) {
         loadSpotifyPlaylists();
       }
@@ -114,7 +112,33 @@ export default function PlaylistTransfer() {
     if (!selectedPlaylist) return;
     
     setTransferring(true);
+    setTransferProgress(0);
     setTransferStatus('Transferring playlist...');
+    
+    let lastProgress = 0;  // Track last progress to prevent going backwards
+    
+    // Start polling for progress every 500ms
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_URL}/transfer-progress`, {
+          credentials: 'include'
+        });
+        if (res.ok) {
+          const data = await res.json();
+          // Only update if progress is same or higher (never go backwards)
+          if (data.progress >= lastProgress) {
+            lastProgress = data.progress;
+            setTransferProgress(data.progress);
+            if (data.current_track && data.current_track !== 'Complete!') {
+              setTransferStatus(`Transferring: ${data.current_track}`);
+            }
+          }
+        }
+      } catch (err) {
+        // Polling error, continue anyway (don't reset progress)
+        console.error('Polling error:', err);
+      }
+    }, 500);
     
     try {
       const res = await fetch(`${API_URL}/transfer`, {
@@ -128,21 +152,28 @@ export default function PlaylistTransfer() {
       });
       
       const data = await res.json();
+      clearInterval(pollInterval);
       
       if (res.ok) {
+        setTransferProgress(100);
         setTransferStatus(
           `✓ Successfully transferred "${selectedPlaylist.name}"!\n` +
           `Added ${data.tracks_added}/${data.total_tracks} tracks.` +
           (data.tracks_not_found > 0 ? ` ${data.tracks_not_found} tracks not found on Tidal.` : '')
         );
-        loadTidalPlaylists(); // Refresh Tidal playlists
+        loadTidalPlaylists();
       } else {
         setTransferStatus(`Error: ${data.error}`);
+        setTransferProgress(0);
       }
     } catch (err) {
+      clearInterval(pollInterval);
+      console.error('Transfer error:', err);
       setTransferStatus('Transfer failed. Please try again.');
+      setTransferProgress(0);
     } finally {
       setTransferring(false);
+      setTimeout(() => setTransferProgress(0), 2000);
     }
   };
 
@@ -312,6 +343,22 @@ export default function PlaylistTransfer() {
                   </>
                 )}
               </button>
+
+              {/* Progress Bar */}
+              {transferring && (
+                <div className="mt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-700">Transferring tracks...</span>
+                    <span className="text-sm font-semibold text-gray-600">{Math.round(transferProgress)}%</span>
+                  </div>
+                  <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-green-500 to-blue-500 rounded-full transition-all duration-300 ease-out shadow-lg"
+                      style={{ width: `${transferProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
 
               {transferStatus && (
                 <div className={`mt-4 p-4 rounded-lg ${
