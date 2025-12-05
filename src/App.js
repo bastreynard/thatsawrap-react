@@ -138,7 +138,7 @@ export default function PlaylistTransfer() {
         // Polling error, continue anyway (don't reset progress)
         console.error('Polling error:', err);
       }
-    }, 500);
+    }, 800);
     
     try {
       const res = await fetch(`${API_URL}/transfer`, {
