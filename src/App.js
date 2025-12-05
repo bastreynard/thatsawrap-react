@@ -12,7 +12,7 @@ export default function PlaylistTransfer() {
   const [transferStatus, setTransferStatus] = useState('');
   const [transferProgress, setTransferProgress] = useState(0);
 
-  const API_URL = 'http://127.0.0.1:8080/api';
+  const API_URL = '/api';
 
   useEffect(() => {
     document.title = "That's a wrap";
