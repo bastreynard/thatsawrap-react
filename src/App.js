@@ -150,7 +150,7 @@ export default function PlaylistTransfer() {
     }
   };
 
-  const transferSinglePlaylist = async (playlist, index, total) => {
+  const transferSinglePlaylist = async (playlist, tracksProcessedSoFar, totalTracksAcrossAll) => {
     let lastProgress = 0;
     
     const pollInterval = setInterval(async () => {
@@ -162,9 +162,11 @@ export default function PlaylistTransfer() {
           const data = await res.json();
           if (data.progress >= lastProgress) {
             lastProgress = data.progress;
-            const playlistProgress = data.progress / total;
-            const baseProgress = (index / total) * 100;
-            setOverallProgress(baseProgress + playlistProgress);
+            // Calculate overall progress: tracks done before + current playlist progress
+            const currentPlaylistTracks = (data.progress / 100) * playlist.tracks;
+            const totalProcessed = tracksProcessedSoFar + currentPlaylistTracks;
+            const overallPercentage = (totalProcessed / totalTracksAcrossAll) * 100;
+            setOverallProgress(overallPercentage);
           }
         }
       } catch (err) {
@@ -220,17 +222,24 @@ export default function PlaylistTransfer() {
     setOverallProgress(0);
     setCurrentTransferIndex(0);
     
+    // Calculate total tracks across all selected playlists
+    const totalTracks = selectedPlaylists.reduce((sum, pl) => sum + pl.tracks, 0);
+    
     const results = [];
+    let tracksProcessed = 0;
     
     for (let i = 0; i < selectedPlaylists.length; i++) {
       setCurrentTransferIndex(i + 1);
       const result = await transferSinglePlaylist(
-        selectedPlaylists[i], 
-        i, 
-        selectedPlaylists.length
+        selectedPlaylists[i],
+        tracksProcessed,
+        totalTracks
       );
       results.push(result);
       setTransferStatus([...results]);
+      
+      // Update tracks processed count
+      tracksProcessed += selectedPlaylists[i].tracks;
     }
     
     setTransferring(false);
