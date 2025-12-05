@@ -709,7 +709,7 @@ export default function PlaylistTransfer() {
         {/* Footer */}
         <div className="text-center py-6">
           <p className="text-gray-500 text-sm">
-            {version.tag}{version.hash && <span className="text-gray-600"> ({version.hash})</span>}
+            <a href="https://github.com/bastreynard/thatsawrap" target="_blank">{version.tag}{version.hash && <span className="text-gray-600"> ({version.hash})</span>}</a>
           </p>
         </div>
       </div>
