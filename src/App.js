@@ -1,58 +1,46 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Music, ArrowRight, Check, Loader2, CheckCircle, Heart, X, CheckSquare, Square } from 'lucide-react';
 import Icon from "./res/icon.png";
 
+// Service configurations
+const TARGET_SERVICES = [
+  { id: 'tidal', name: 'Tidal', color: 'blue', enabled: true },
+  { id: 'qobuz', name: 'Qobuz', color: 'purple', enabled: true },
+  { id: 'youtube_music', name: 'YouTube Music', color: 'red', enabled: false },
+];
+
 export default function PlaylistTransfer() {
   const [spotifyAuth, setSpotifyAuth] = useState(false);
-  const [tidalAuth, setTidalAuth] = useState(false);
+  const [targetServicesAuth, setTargetServicesAuth] = useState({
+    tidal: false,
+    youtube_music: false,
+    qobuz: false,
+  });
+  const [selectedTargetService, setSelectedTargetService] = useState('tidal');
   const [spotifyPlaylists, setSpotifyPlaylists] = useState([]);
-  const [tidalPlaylists, setTidalPlaylists] = useState([]);
+  const [targetPlaylists, setTargetPlaylists] = useState({});
   const [selectedPlaylists, setSelectedPlaylists] = useState([]);
   const [transferring, setTransferring] = useState(false);
   const [transferStatus, setTransferStatus] = useState([]);
   const [currentTransferIndex, setCurrentTransferIndex] = useState(0);
   const [overallProgress, setOverallProgress] = useState(0);
   const [version, setVersion] = useState({ tag: 'loading...', hash: '' });
+  
+  // Qobuz login modal states
+  const [qobuzLoginModal, setQobuzLoginModal] = useState(false);
+  const [qobuzEmail, setQobuzEmail] = useState('');
+  const [qobuzPassword, setQobuzPassword] = useState('');
+  const [qobuzLoggingIn, setQobuzLoggingIn] = useState(false);
+  const [qobuzLoginError, setQobuzLoginError] = useState('');
 
   const API_URL = '/api';
 
-  useEffect(() => {
-    document.title = "That's a wrap";
-    checkAuthStatus();
-    fetchVersion();
-    
-    const interval = setInterval(() => {
-      if ((spotifyAuth && spotifyPlaylists.length > 0) || 
-          (!spotifyAuth && !tidalAuth)) {
-        return;
-      }
-      checkAuthStatus();
-    }, 2000);
-    
-    return () => clearInterval(interval);
-  }, [spotifyAuth, tidalAuth, spotifyPlaylists.length]);
+  // Get current target service config
+  const currentTarget = TARGET_SERVICES.find(s => s.id === selectedTargetService);
+  const isTargetAuth = targetServicesAuth[selectedTargetService];
 
-  const checkAuthStatus = async () => {
-    try {
-      const res = await fetch(`${API_URL}/auth/status`, {
-        credentials: 'include'
-      });
-      const data = await res.json();
-      setSpotifyAuth(data.spotify);
-      setTidalAuth(data.tidal);
-      
-      if (data.spotify) {
-        loadSpotifyPlaylists();
-      }
-      if (data.tidal) {
-        loadTidalPlaylists();
-      }
-    } catch (err) {
-      console.error('Auth check failed:', err);
-    }
-  };
-
-  const fetchVersion = async () => {
+  // Define all callback functions BEFORE useEffect
+  const fetchVersion = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/version`, {
         credentials: 'include'
@@ -66,14 +54,140 @@ export default function PlaylistTransfer() {
       console.error('Failed to fetch version:', err);
       setVersion({ tag: 'unknown', hash: '' });
     }
-  };
+  }, []);
+
+  const loadSpotifyPlaylists = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/spotify/playlists`, {
+        credentials: 'include'
+      });
+      const data = await res.json();
+      setSpotifyPlaylists(data.playlists || []);
+    } catch (err) {
+      console.error('Failed to load Spotify playlists:', err);
+    }
+  }, []);
+
+  const loadTargetPlaylists = useCallback(async (serviceId) => {
+    try {
+      const res = await fetch(`${API_URL}/${serviceId}/playlists`, {
+        credentials: 'include'
+      });
+      const data = await res.json();
+      setTargetPlaylists(prev => ({
+        ...prev,
+        [serviceId]: data.playlists || []
+      }));
+    } catch (err) {
+      console.error(`Failed to load ${serviceId} playlists:`, err);
+    }
+  }, []);
+
+  const checkAuthStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/auth/status`, {
+        credentials: 'include'
+      });
+      const data = await res.json();
+      
+      // Update Spotify auth
+      setSpotifyAuth(prev => {
+        if (prev !== data.spotify) {
+          // Load playlists when newly authenticated
+          if (data.spotify && !prev) {
+            setTimeout(() => loadSpotifyPlaylists(), 0);
+          }
+          return data.spotify;
+        }
+        return prev;
+      });
+      
+      // Update target services auth status
+      setTargetServicesAuth(prev => {
+        let hasChanges = false;
+        const newAuth = { ...prev };
+        
+        TARGET_SERVICES.forEach(service => {
+          if (data[service.id] !== undefined && data[service.id] !== prev[service.id]) {
+            newAuth[service.id] = data[service.id];
+            hasChanges = true;
+            
+            // Load playlists when newly authenticated
+            if (data[service.id] && !prev[service.id]) {
+              setTimeout(() => loadTargetPlaylists(service.id), 0);
+            }
+          }
+        });
+        
+        return hasChanges ? newAuth : prev;
+      });
+    } catch (err) {
+      console.error('Auth check failed:', err);
+    }
+  }, [loadSpotifyPlaylists, loadTargetPlaylists]);
+
+  // NOW the useEffect can safely use these functions
+  useEffect(() => {
+    document.title = "That's a wrap";
+    checkAuthStatus();
+    fetchVersion();
+    
+    // Set up polling interval
+    const interval = setInterval(() => {
+      checkAuthStatus();
+    }, 3000); // Poll every 3 seconds
+    
+    return () => clearInterval(interval);
+  }, [checkAuthStatus, fetchVersion]);
 
   const connectSpotify = () => {
     window.location.href = `${API_URL}/auth/spotify`;
   };
 
-  const connectTidal = () => {
-    window.location.href = `${API_URL}/auth/tidal`;
+  const connectTargetService = (serviceId) => {
+    if (serviceId === 'qobuz') {
+      // Show login modal for Qobuz
+      setQobuzLoginModal(true);
+      setQobuzLoginError('');
+    } else {
+      // OAuth flow for other services
+      window.location.href = `${API_URL}/auth/${serviceId}`;
+    }
+  };
+
+  const handleQobuzLogin = async (e) => {
+    e.preventDefault();
+    setQobuzLoggingIn(true);
+    setQobuzLoginError('');
+    
+    try {
+      const res = await fetch(`${API_URL}/auth/qobuz/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          email: qobuzEmail,
+          password: qobuzPassword
+        })
+      });
+      
+      const data = await res.json();
+      
+      if (res.ok && data.success) {
+        setQobuzLoginModal(false);
+        setQobuzEmail('');
+        setQobuzPassword('');
+        // Check auth status to update UI
+        checkAuthStatus();
+      } else {
+        setQobuzLoginError(data.error || 'Login failed');
+      }
+    } catch (err) {
+      console.error('Qobuz login error:', err);
+      setQobuzLoginError('Connection error. Please try again.');
+    } finally {
+      setQobuzLoggingIn(false);
+    }
   };
 
   const disconnectSpotify = async () => {
@@ -90,44 +204,16 @@ export default function PlaylistTransfer() {
     }
   };
 
-  const disconnectTidal = async () => {
+  const disconnectTargetService = async (serviceId) => {
     try {
-      await fetch(`${API_URL}/disconnect/tidal`, {
+      await fetch(`${API_URL}/disconnect/${serviceId}`, {
         method: 'POST',
         credentials: 'include'
       });
-      setTidalAuth(false);
-      setTidalPlaylists([]);
+      setTargetServicesAuth(prev => ({ ...prev, [serviceId]: false }));
+      setTargetPlaylists(prev => ({ ...prev, [serviceId]: [] }));
     } catch (err) {
-      console.error('Failed to disconnect Tidal:', err);
-    }
-  };
-
-  const loadSpotifyPlaylists = async () => {
-    try {
-      const res = await fetch(`${API_URL}/spotify/playlists`, {
-        credentials: 'include'
-      });
-      const data = await res.json();
-      // Only update if different to prevent UI resets
-      const newPlaylists = data.playlists || [];
-      if (JSON.stringify(newPlaylists) !== JSON.stringify(spotifyPlaylists)) {
-        setSpotifyPlaylists(newPlaylists);
-      }
-    } catch (err) {
-      console.error('Failed to load Spotify playlists:', err);
-    }
-  };
-
-  const loadTidalPlaylists = async () => {
-    try {
-      const res = await fetch(`${API_URL}/tidal/playlists`, {
-        credentials: 'include'
-      });
-      const data = await res.json();
-      setTidalPlaylists(data.playlists || []);
-    } catch (err) {
-      console.error('Failed to load Tidal playlists:', err);
+      console.error(`Failed to disconnect ${serviceId}:`, err);
     }
   };
 
@@ -162,7 +248,6 @@ export default function PlaylistTransfer() {
           const data = await res.json();
           if (data.progress >= lastProgress) {
             lastProgress = data.progress;
-            // Calculate overall progress: tracks done before + current playlist progress
             const currentPlaylistTracks = (data.progress / 100) * playlist.tracks;
             const totalProcessed = tracksProcessedSoFar + currentPlaylistTracks;
             const overallPercentage = (totalProcessed / totalTracksAcrossAll) * 100;
@@ -181,7 +266,8 @@ export default function PlaylistTransfer() {
         credentials: 'include',
         body: JSON.stringify({ 
           playlist_id: playlist.id,
-          playlist_type: playlist.type
+          playlist_type: playlist.type,
+          target_service: selectedTargetService // Add target service
         })
       });
       
@@ -222,7 +308,6 @@ export default function PlaylistTransfer() {
     setOverallProgress(0);
     setCurrentTransferIndex(0);
     
-    // Calculate total tracks across all selected playlists
     const totalTracks = selectedPlaylists.reduce((sum, pl) => sum + pl.tracks, 0);
     
     const results = [];
@@ -238,20 +323,43 @@ export default function PlaylistTransfer() {
       results.push(result);
       setTransferStatus([...results]);
       
-      // Update tracks processed count
       tracksProcessed += selectedPlaylists[i].tracks;
     }
     
     setTransferring(false);
     setOverallProgress(100);
-    loadTidalPlaylists();
+    loadTargetPlaylists(selectedTargetService);
     
-    // Clear selections after successful transfer
     setTimeout(() => {
       setSelectedPlaylists([]);
       setTransferStatus([]);
       setOverallProgress(0);
     }, 5000);
+  };
+
+  // Get color classes based on service
+  const getColorClasses = (color, variant = 'primary') => {
+    const colors = {
+      blue: {
+        primary: 'bg-blue-600 hover:bg-blue-700',
+        connected: 'bg-blue-900 text-blue-300',
+        badge: 'text-blue-600',
+        border: 'border-blue-700 text-blue-400 hover:bg-blue-950'
+      },
+      red: {
+        primary: 'bg-red-600 hover:bg-red-700',
+        connected: 'bg-red-900 text-red-300',
+        badge: 'text-red-600',
+        border: 'border-red-700 text-red-400 hover:bg-red-950'
+      },
+      purple: {
+        primary: 'bg-purple-600 hover:bg-purple-700',
+        connected: 'bg-purple-900 text-purple-300',
+        badge: 'text-purple-600',
+        border: 'border-purple-700 text-purple-400 hover:bg-purple-950'
+      }
+    };
+    return colors[color]?.[variant] || colors.blue[variant];
   };
 
   return (
@@ -264,17 +372,17 @@ export default function PlaylistTransfer() {
               That's a wrap
             </h1>
           </div>
-          <p className="text-gray-400">Transfer your playlists from Spotify to Tidal</p>
+          <p className="text-gray-400">Transfer your playlists from Spotify to any streaming service</p>
         </div>
 
         <div className="bg-gray-800 rounded-2xl shadow-xl p-8 mb-6 border border-gray-700">
           <h2 className="text-2xl font-semibold mb-6 text-white">Connect Services</h2>
           
           <div className="grid md:grid-cols-2 gap-6">
-            {/* Spotify Section */}
+            {/* Spotify Section (Source) */}
             <div className="border-2 border-gray-700 bg-gray-900 rounded-xl p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xl font-semibold text-gray-200">Spotify</h3>
+                <h3 className="text-xl font-semibold text-gray-200">Spotify (Source)</h3>
                 {spotifyAuth && (
                   <div className="flex items-center gap-2 text-green-600">
                     <CheckCircle className="w-5 h-5" />
@@ -356,33 +464,57 @@ export default function PlaylistTransfer() {
               )}
             </div>
 
-            {/* Tidal Section */}
+            {/* Target Service Section */}
             <div className="border-2 border-gray-700 bg-gray-900 rounded-xl p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xl font-semibold text-gray-200">Tidal</h3>
-                {tidalAuth && (
-                  <div className="flex items-center gap-2 text-blue-600">
+              <div className="mb-4">
+                <h3 className="text-xl font-semibold text-gray-200 mb-3">Target Service</h3>
+                
+                {/* Service Selector */}
+                <div className="flex gap-2 mb-4">
+                  {TARGET_SERVICES.map((service) => (
+                    <button
+                      key={service.id}
+                      onClick={() => setSelectedTargetService(service.id)}
+                      disabled={!service.enabled}
+                      className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition ${
+                        selectedTargetService === service.id
+                          ? getColorClasses(service.color, 'primary') + ' text-white'
+                          : service.enabled
+                          ? 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                          : 'bg-gray-800 text-gray-600 cursor-not-allowed'
+                      }`}
+                    >
+                      {service.name}
+                      {!service.enabled && <span className="text-xs block">(Coming Soon)</span>}
+                    </button>
+                  ))}
+                </div>
+
+                {isTargetAuth && (
+                  <div className={`flex items-center gap-2 mb-3 ${getColorClasses(currentTarget.color, 'badge')}`}>
                     <CheckCircle className="w-5 h-5" />
-                    <span className="text-sm font-medium">Connected</span>
+                    <span className="text-sm font-medium">Connected to {currentTarget.name}</span>
                   </div>
                 )}
               </div>
               
               <button
-                onClick={connectTidal}
-                disabled={tidalAuth}
+                onClick={() => connectTargetService(selectedTargetService)}
+                disabled={isTargetAuth || !currentTarget.enabled}
                 className={`w-full py-3 px-6 rounded-lg font-medium transition ${
-                  tidalAuth
-                    ? 'bg-blue-900 text-blue-300 cursor-not-allowed'
-                    : 'bg-blue-600 text-white hover:bg-blue-700'
+                  isTargetAuth
+                    ? getColorClasses(currentTarget.color, 'connected') + ' cursor-not-allowed'
+                    : !currentTarget.enabled
+                    ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                    : getColorClasses(currentTarget.color, 'primary') + ' text-white'
                 }`}
               >
-                {tidalAuth ? 'Connected' : 'Connect Tidal'}
+                {isTargetAuth ? `Connected to ${currentTarget.name}` : `Connect ${currentTarget.name}`}
               </button>
 
-              {tidalAuth && (
+              {isTargetAuth && (
                 <button
-                  onClick={disconnectTidal}
+                  onClick={() => disconnectTargetService(selectedTargetService)}
                   className="w-full mt-2 py-2 px-4 border border-red-700 text-red-400 rounded-lg font-medium hover:bg-red-950 transition text-sm flex items-center justify-center gap-2"
                 >
                   <X className="w-4 h-4" />
@@ -390,12 +522,12 @@ export default function PlaylistTransfer() {
                 </button>
               )}
 
-              {tidalAuth && (
+              {isTargetAuth && (
                 <div className="mt-4">
                   <h4 className="text-sm font-semibold text-gray-300 mb-3">Your Playlists</h4>
                   <div className="max-h-64 overflow-y-auto space-y-2">
-                    {tidalPlaylists.length > 0 ? (
-                      tidalPlaylists.map((playlist) => (
+                    {targetPlaylists[selectedTargetService]?.length > 0 ? (
+                      targetPlaylists[selectedTargetService].map((playlist) => (
                         <div
                           key={playlist.id}
                           className="p-3 border border-gray-700 bg-gray-800 rounded-lg text-sm"
@@ -415,7 +547,7 @@ export default function PlaylistTransfer() {
             </div>
           </div>
 
-          {spotifyAuth && tidalAuth && selectedPlaylists.length > 0 && (
+          {spotifyAuth && isTargetAuth && selectedPlaylists.length > 0 && (
             <div className="mt-8 pt-8 border-t border-gray-700">
               <h2 className="text-2xl font-semibold mb-6 text-white">Transfer</h2>
               
@@ -431,7 +563,7 @@ export default function PlaylistTransfer() {
                   </>
                 ) : (
                   <>
-                    Transfer {selectedPlaylists.length} Playlist{selectedPlaylists.length !== 1 ? 's' : ''} to Tidal
+                    Transfer {selectedPlaylists.length} Playlist{selectedPlaylists.length !== 1 ? 's' : ''} to {currentTarget.name}
                     <ArrowRight className="w-5 h-5" />
                   </>
                 )}
@@ -494,6 +626,85 @@ export default function PlaylistTransfer() {
             </div>
           )}
         </div>
+
+        {/* Qobuz Login Modal */}
+        {qobuzLoginModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+            <div className="bg-gray-800 rounded-xl p-8 max-w-md w-full mx-4 border border-gray-700">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-white">Login to Qobuz</h2>
+                <button
+                  onClick={() => {
+                    setQobuzLoginModal(false);
+                    setQobuzLoginError('');
+                  }}
+                  className="text-gray-400 hover:text-white"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              
+              <form onSubmit={handleQobuzLogin}>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Email
+                    </label>
+                    <input
+                      type="email"
+                      value={qobuzEmail}
+                      onChange={(e) => setQobuzEmail(e.target.value)}
+                      className="w-full px-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      placeholder="your@email.com"
+                      required
+                      disabled={qobuzLoggingIn}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-300 mb-2">
+                      Password
+                    </label>
+                    <input
+                      type="password"
+                      value={qobuzPassword}
+                      onChange={(e) => setQobuzPassword(e.target.value)}
+                      className="w-full px-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      placeholder="••••••••"
+                      required
+                      disabled={qobuzLoggingIn}
+                    />
+                  </div>
+                  
+                  {qobuzLoginError && (
+                    <div className="p-3 bg-red-950 border border-red-800 rounded-lg text-red-300 text-sm">
+                      {qobuzLoginError}
+                    </div>
+                  )}
+                  
+                  <button
+                    type="submit"
+                    disabled={qobuzLoggingIn}
+                    className="w-full py-3 px-6 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-medium transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {qobuzLoggingIn ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Logging in...
+                      </>
+                    ) : (
+                      'Login'
+                    )}
+                  </button>
+                </div>
+              </form>
+              
+              <p className="text-sm text-gray-400 mt-4 text-center">
+                Your credentials are used only to authenticate with Qobuz and are not stored.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="text-center py-6">
